@@ -41,7 +41,8 @@ def co_registration(parent_path, child_path, output_path=None):
             "dtype": src_dtype,
             "crs": dst_crs,
             "transform": dst_transform,
-            "nodata": nodata_val
+            "nodata": nodata_val,
+            "compress": "LZW"
         }
 
         if output_path is None:
