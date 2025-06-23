@@ -1,3 +1,4 @@
+import os
 import rasterio
 from rasterio.warp import reproject, Resampling
 
@@ -43,6 +44,10 @@ def co_registration(parent_path, child_path, output_path):
             "nodata": nodata_val
         }
 
+        if output_path is None:
+            basename, extension = os.path.splitext(child_path)
+            output_path = basename + "_coregistered" + extension
+
         # Create new raster
         with rasterio.open(output_path, "w", **dst_profile) as dst:
             reproject(
@@ -56,3 +61,5 @@ def co_registration(parent_path, child_path, output_path):
                 src_nodata=src_nodata,
                 dst_nodata=nodata_val
             )
+
+    return output_path
