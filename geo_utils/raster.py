@@ -3,7 +3,7 @@ import rasterio
 from rasterio.warp import reproject, Resampling
 
 
-def co_registration(parent_path, child_path, output_path):
+def co_registration(parent_path, child_path, output_path=None):
 
     # Open reference raster (Parent)
     with rasterio.open(parent_path) as parent:
