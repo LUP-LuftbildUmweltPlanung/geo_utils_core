@@ -27,121 +27,123 @@ def co_registration(parent_path, child_path, resampling_method, output_path=None
         The path of the output raster (the reprojected raster).
 
     """
+
     if resampling_method not in ['nearest', 'bilinear', 'cubic', 'lanczos']:
         raise ValueError(f"Invalid resampling method: {resampling_method}")
 
-    # Open reference raster (Parent)
     with rasterio.open(parent_path) as parent:
         dst_crs = parent.crs
         dst_transform = parent.transform
         dst_shape = (parent.height, parent.width)
-
-    # Open target raster (Child)
-    with (rasterio.open(child_path) as child):
-        src_crs = child.crs
-        src_transform = child.transform
-        src_dtype = child.dtypes[0]
-        src_nodata = child.nodata
-
-        # copy nodata-value vom child or define new one if not set
-        if child.nodata is not None:
-            nodata_val = child.nodata
-        else:
-            # dynamic setting of nodata-value depending on datatype
-            if src_dtype == 'int8' or src_dtype == 'byte':
-                nodata_val = -128
-            elif src_dtype == 'uint8':
-                nodata_val = 255
-            elif src_dtype == 'int16':
-                nodata_val = -32768
-            elif src_dtype == 'uint16':
-                nodata_val = 65535
-            elif src_dtype == 'int32':
-                nodata_val = -2147483648
-            elif src_dtype == 'uint32':
-                nodata_val = 4294967295
-            elif src_dtype == 'float32' or 'float64':
-                nodata_val = -9999.0
-            else:
-                nodata_val = None  # for all other types (can be changed)
-
-        # Create new raster profile
-        dst_profile = {
+        dst_profile = parent.profile.copy()
+        dst_profile.update({
             "driver": "GTiff",
-            "height": dst_shape[0],
-            "width": dst_shape[1],
             "count": 1,
-            "dtype": src_dtype,
-            "crs": dst_crs,
-            "transform": dst_transform,
-            "nodata": nodata_val,
             "compress": "LZW"
-        }
+        })
 
-        if output_path is None:
-            basename, extension = os.path.splitext(child_path)
-            output_path = basename + "_coregistered" + extension
+        with rasterio.open(child_path) as child:
+            src_crs = child.crs
+            src_transform = child.transform
+            src_dtype = child.dtypes[0]
+            src_nodata = child.nodata
 
-        # Resampling Methode definieren
-        resampling_method = getattr(Resampling, resampling_method)
+            # Nodata ableiten
+            if src_nodata is not None:
+                nodata_val = src_nodata
+            else:
+                if src_dtype in ['int8', 'byte']:
+                    nodata_val = -128
+                elif src_dtype == 'uint8':
+                    nodata_val = 255
+                elif src_dtype == 'int16':
+                    nodata_val = -32768
+                elif src_dtype == 'uint16':
+                    nodata_val = 65535
+                elif src_dtype == 'int32':
+                    nodata_val = -2147483648
+                elif src_dtype == 'uint32':
+                    nodata_val = 4294967295
+                elif src_dtype in ['float32', 'float64']:
+                    nodata_val = -9999.0
+                else:
+                    nodata_val = None
 
-        # Create new raster
-        with rasterio.open(output_path, "w", **dst_profile) as dst:
-            # Process the image block by block
-            for ji, window in child.block_windows(1):  # block-wise iteration over the raster
-                data = child.read(1, window=window)  # Read the block data
-                destination_data = np.empty_like(data)  # Create an empty array for the reprojected data
-                reproject(
-                    source=data,
-                    destination=destination_data,
-                    src_transform=src_transform,
-                    src_crs=src_crs,
-                    dst_transform=dst_transform,
-                    dst_crs=dst_crs,
-                    resampling=resampling_method,
-                    src_nodata=src_nodata,
-                    dst_nodata=nodata_val
-                )
-                dst.write(destination_data, 1, window=window)  # Write the processed block
+            dst_profile.update({
+                "dtype": src_dtype,
+                "nodata": nodata_val
+            })
+
+            if output_path is None:
+                basename, extension = os.path.splitext(child_path)
+                output_path = basename + "_coregistered" + extension
+
+            resampling_enum = getattr(Resampling, resampling_method)
+
+            with rasterio.open(output_path, "w", **dst_profile) as dst:
+                # Blockweise arbeiten: entscheidend ist das Window-Transform!
+                for ji, window in dst.block_windows(1):
+                    window_shape = (window.height, window.width)
+                    dest_array = np.full(window_shape, nodata_val, dtype=src_dtype)
+
+                    # *** WICHTIG: Transform des aktuellen Windows berechnen ***
+                    win_transform = rasterio.windows.transform(window, dst_transform)
+
+                    reproject(
+                        source=rasterio.band(child, 1),
+                        destination=dest_array,
+                        src_transform=src_transform,
+                        src_crs=src_crs,
+                        dst_transform=win_transform,
+                        dst_crs=dst_crs,
+                        resampling=resampling_enum,
+                        src_nodata=src_nodata,
+                        dst_nodata=nodata_val
+                    )
+
+                    dst.write(dest_array, 1, window=window)
 
     return output_path
 
 
 def compress_raster(input_path, output_path=None, compression_method="LZW"):
     """
-    Komprimiert ein Raster und speichert es unter einem neuen Pfad, Blockweise verarbeitet, um den Speicherbedarf zu verringern.
+    Compress a raster and save it to a new path.
+    The raster is processed block by block to reduce memory usage.
 
     :param input_path: str
-        Pfad zum Eingabe-Raster.
+        Path to the input raster.
     :param output_path: str
-        Pfad für das komprimierte Ausgabedatei.
+        Path for the compressed output file.
     :param compression_method: str
-        die Kompressionsmethode. Mögliche Werte: ['DEFLATE', 'LZW', 'JPEG', 'PACKBITS'].
+        Compression method. Possible values: ['DEFLATE', 'LZW', 'JPEG', 'PACKBITS'].
         **DEFLATE**: Lossless compression, commonly used for reducing file size without quality loss.
-        **LZW**: Lossless compression, used for TIFF files, effective for images with large areas of uniform color.
+        **LZW**: Lossless compression, often used for TIFF files, effective for images with large areas of uniform color.
+        **JPEG**: Lossy compression, efficient for natural images but may reduce quality.
+        **PACKBITS**: Run-length encoding, efficient for simple raster data with repeating values.
     :return: str
-        der Pfad des komprimierten Rasters.
+        Path of the compressed raster.
     """
-    # Öffne das Eingabe-Raster
+    # Open the input raster
     with rasterio.open(input_path) as src:
-        # Erstelle das Zielprofil (kopiere alle Eigenschaften außer den Werten)
+        # Create the target profile (copy all properties except values)
         profile = src.profile
         profile.update({
-            "compress": compression_method  # Kompressionsmethode anwenden
+            "compress": compression_method  # Apply compression method
         })
 
-        # Wenn kein Ausgabepfad angegeben ist, erstelle einen standardmäßigen Pfad
+        # If no output path is provided, create a default one
         if output_path is None:
             basename, extension = os.path.splitext(input_path)
             output_path = basename + "_compressed" + extension
 
-        # Schreibe das komprimierte Raster in die Ausgabedatei
+        # Write the compressed raster to the output file
         with rasterio.open(output_path, "w", **profile) as dst:
-            # Iteriere über alle Bänder
+            # Iterate over all bands
             for i in range(1, src.count + 1):
-                # Lese und schreibe das Raster blockweise
-                for ji, window in src.block_windows(i):  # blockweise lesen
-                    data = src.read(i, window=window)  # Lese den Block
-                    dst.write(data, i, window=window)  # Schreibe den Block
+                # Read and write the raster block by block
+                for ji, window in src.block_windows(i):  # read block by block
+                    data = src.read(i, window=window)    # Read the block
+                    dst.write(data, i, window=window)    # Write the block
 
     return output_path
