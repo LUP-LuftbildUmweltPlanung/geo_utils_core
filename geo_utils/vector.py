@@ -1,100 +1,222 @@
-import geopandas as gpd
 import os
+import numpy as np
+import geopandas as gpd
 import rasterio
 from rasterio.features import rasterize
-import numpy as np
+from rasterio.transform import from_origin
+from rasterio.windows import transform as window_transform, bounds as window_bounds
+from shapely.geometry import box
+from typing import List, Optional, Union
 
-
-def rasterize_vector(input_path, resolution, attribute=None, datatype=None, nodata_value=None, crs=None, output_path=None):
+def rasterize_vector(
+    input_path: str,
+    resolution: float,
+    attribute: Optional[Union[str, List[str]]] = None,
+    datatype: Optional[str] = None,          # 'uint8' | 'int32' | 'float32'
+    nodata_value: Optional[Union[int,float]] = None,
+    crs: Optional[str] = None,
+    output_path: Optional[str] = None,
+    # block/tile controls
+    block_size: int = 512,                   # GTiff tile size (blockxsize=blockysize)
+    tiled: bool = True,
+    compress: Optional[str] = None,          # e.g., 'DEFLATE', 'LZW'
+):
     """
-    Rasterisiert ein Shapefile oder GeoPackage und erstellt ein Raster mit einem spezifischen Attribut als Pixelwert.
+    Rasterize a (potentially large) vector layer to a (multi-band) GeoTIFF,
+    writing block-by-block to keep memory usage low.
 
-    :param input_path: str
-        Pfad zum Shapefile oder GeoPackage.
-    :param output_path: str
-        Pfad zum Ausgabedatei (Raster).
-    :param resolution: float
-        Die Auflösung des Rasters in der gleichen Einheit wie die Projektion (z.B. Meter).
-    :param attribute: str
-        Das Attribut, das als Pixelwert verwendet wird.
-    :param datatype: str
-        Datentyp für das Output Raster. Mögliche Datentypen sind ['uint8', 'int32', 'float32']. Wird kein Datentyp angegeben,
-        wird dieser basierend auf den Attributen ermittelt.
-    :param nodata_value: optional
-        Der Wert, der für "NoData"-Pixel verwendet wird. Wenn nicht angegeben, wird dieser basierend auf dem Datentyp gesetzt.
-    :param crs: str
-        Das Zielkoordinatensystem des erstellten Rasters.
-    :return: str
-        Der Pfad des erstellten Rasters.
+    - If `attribute` is a string → single-band raster.
+    - If `attribute` is a list of strings → one band per attribute.
+    - If `attribute` is None → constant value 1 (single band).
+
+    Parameters
+    ----------
+    input_path : str
+        Path to Shapefile/GeoPackage.
+    resolution : float
+        Target pixel size in layer CRS units (e.g., meters).
+    attribute : str | List[str] | None
+        Attribute(s) to burn into raster.
+    datatype : str | None
+        'uint8' | 'int32' | 'float32'. Inferred if None.
+    nodata_value : number | None
+        NoData value; defaults by dtype if None.
+    crs : str | None
+        Target CRS for output; defaults to vector CRS.
+    output_path : str | None
+        Output GeoTIFF path. Defaults to `<input>_rasterized.tif`.
+    block_size : int
+        Tile size for GTiff blocks (both x and y).
+    tiled : bool
+        Use tiled GeoTIFF.
+    compress : str | None
+        GDAL compression (e.g., 'DEFLATE', 'LZW').
+
+    Returns
+    -------
+    str
+        Path to the created raster.
     """
-
-    # Shapefile oder GeoPackage einlesen
+    # --- Load vector ---
     gdf = gpd.read_file(input_path)
 
-    # Falls kein Attribut angegeben ist, bekommen alle Pixel den Wert 1
-    if attribute is None:
-        gdf[attribute] = 1
-
-    # Datentyp bestimmen basierend auf den Attributwerten, falls kein Datentyp angegeben wurde
-    if datatype is None and nodata_value is None:
-        if np.issubdtype(gdf[attribute].dtype, np.integer):
-            datatype = 'int32'  # Standardmäßig 32-bit Integer
-            if nodata_value is None:
-                nodata_value = -1  # Standardwert für Ganzzahlen
-        elif np.issubdtype(gdf[attribute].dtype, np.unsignedinteger):
-            datatype = 'uint8'  # Wenn es ein unsigned integer ist
-            if nodata_value is None:
-                nodata_value = 255  # Standardwert für unsigned integer
-        else:
-            datatype = 'float32'  # Für alle anderen Fälle den größten Datentyp verwenden
-            if nodata_value is None:
-                nodata_value = -9999
-    elif datatype is None and nodata_value is not None:
-        datatype = 'float32' # größter Datentyp, damit kein Fehler auftritt
-
-    # Falls nur der Datentyp angegeben wird, wird der Nodata-Value darauf basierend gesetzt
-    if nodata_value is None:
-        if datatype == 'int32':
-            nodata_value = -1
-        elif datatype == 'uint8':
-            nodata_value = 255
-        elif datatype == 'float32':
-            nodata_value = -9999
-
-    # Falls kein Koordinatensystem angegeben wurde, wird das CRS der Vektor-File genutzt
+    # Ensure CRS
     if crs is None:
         crs = gdf.crs
+    else:
+        if gdf.crs != crs:
+            gdf = gdf.to_crs(crs)
 
-    # Festlegen des Extents und der Rasterauflösung
-    bounds = gdf.total_bounds
-    width = int((bounds[2] - bounds[0]) / resolution)
-    height = int((bounds[3] - bounds[1]) / resolution)
+    # Attributes handling
+    created_const = False
+    if attribute is None:
+        gdf["_const"] = 1
+        attributes = ["_const"]
+        created_const = True
+    elif isinstance(attribute, str):
+        attributes = [attribute]
+    else:
+        attributes = list(attribute)
 
-    # Transformationsmatrix erstellen
-    transform = rasterio.transform.from_origin(bounds[0], bounds[3], resolution, resolution)
+    # Dtype / nodata defaults (infer from first attribute if needed)
+    if datatype is None and nodata_value is None:
+        sample_dtype = gdf[attributes[0]].dtype
+        if np.issubdtype(sample_dtype, np.unsignedinteger):
+            datatype, nodata_value = "uint8", 255
+        elif np.issubdtype(sample_dtype, np.integer):
+            datatype, nodata_value = "int32", -1
+        else:
+            datatype, nodata_value = "float32", -9999.0
+    elif datatype is None and nodata_value is not None:
+        # Safe fallback if only nodata provided
+        datatype = "float32"
+    elif datatype is not None and nodata_value is None:
+        if datatype == "uint8":
+            nodata_value = 255
+        elif datatype == "int32":
+            nodata_value = -1
+        elif datatype == "float32":
+            nodata_value = -9999.0
+        else:
+            raise ValueError("datatype must be one of: 'uint8', 'int32', 'float32'.")
 
-    # Rasterisieren der Geometrien und Zuweisen des Attributs als Pixelwert
-    shapes = ((geom, value) for geom, value in zip(gdf.geometry, gdf[attribute]))
-    raster = rasterize(shapes, out_shape=(height, width), transform=transform, fill=nodata_value, dtype=datatype)
+    # Extent & dimensions
+    minx, miny, maxx, maxy = gdf.total_bounds
+    width = int(np.ceil((maxx - minx) / resolution))
+    height = int(np.ceil((maxy - miny) / resolution))
+    transform = from_origin(minx, maxy, resolution, resolution)
 
-    # Profil für die Ausgabe-Rasterdatei erstellen
-    profile = {
-        'driver': 'GTiff',
-        'count': 1,
-        'dtype': datatype,
-        'crs': crs,
-        'transform': transform,
-        'width': width,
-        'height': height,
-        'nodata': nodata_value
-    }
-
+    # Output path
     if output_path is None:
-        basename, extension = os.path.splitext(input_path)
-        output_path = basename + "_rasterzied.tif"
+        base, _ = os.path.splitext(input_path)
+        output_path = f"{base}_rasterized.tif"
 
-    # Das Raster speichern
-    with rasterio.open(output_path, 'w', **profile) as dst:
-        dst.write(raster, 1)
+    # Profile
+    profile = {
+        "driver": "GTiff",
+        "count": len(attributes),
+        "dtype": datatype,
+        "crs": crs,
+        "transform": transform,
+        "width": width,
+        "height": height,
+        "nodata": nodata_value,
+        "tiled": tiled,
+        "blockxsize": block_size if tiled else None,
+        "blockysize": block_size if tiled else None,
+    }
+    if compress:
+        profile["compress"] = compress
+
+    # Spatial index to get only features intersecting a window
+    sindex = gdf.sindex
+
+    # Create and write block-wise
+    with rasterio.open(output_path, "w", **profile) as dst:
+        # Optional: band descriptions = attribute names
+        for b, attr in enumerate(attributes, start=1):
+            try:
+                dst.set_band_description(b, str(attr))
+            except Exception:
+                pass
+
+        # Iterate over blocks of band 1 (same tiling across bands)
+        for _, window in dst.block_windows(1):
+            # Bounds of this window in map coords
+            w_bounds = window_bounds(window, transform)
+            w_poly = box(*w_bounds)
+
+            # Find candidate features intersecting this window
+            idxs = list(sindex.query(w_poly))
+            if not idxs:
+                # Nothing intersects → write fill blocks for all bands
+                for band in range(1, len(attributes) + 1):
+                    dst.write(
+                        np.full((window.height, window.width), nodata_value, dtype=datatype),
+                        band,
+                        window=window,
+                    )
+                continue
+
+            # Subset GeoDataFrame for this window
+            sub = gdf.iloc[idxs]
+
+            # Window-specific transform
+            w_transform = window_transform(window, transform)
+
+            # For each band (attribute), rasterize ONLY intersecting geometries
+            for band_idx, attr in enumerate(attributes, start=1):
+                shapes = ((geom, val) for geom, val in zip(sub.geometry, sub[attr]))
+                arr = rasterize(
+                    shapes=shapes,
+                    out_shape=(window.height, window.width),
+                    transform=w_transform,
+                    fill=nodata_value,
+                    dtype=datatype,
+                )
+                dst.write(arr, band_idx, window=window)
+
+    # Clean up temp const column if we added it (no file side-effect, just clarity)
+    if created_const and "_const" in gdf.columns:
+        gdf.drop(columns=["_const"], inplace=True)
 
     return output_path
+
+
+def count_features(
+        input_path: str,
+        attribute: str = None
+):
+    """
+    Count the number of features in a Shapefile or GeoPackage.
+    If an attribute is provided, counts are grouped by the unique values
+    of that attribute. Otherwise, the total number of features is returned.
+
+    :param input_path: str
+        Path to the Shapefile or GeoPackage.
+    :param attribute: str, optional
+        Attribute to group the counts by. If not provided, only the total
+        number of features is counted.
+    :return: dict or int
+        - If `attribute` is set: dictionary with counts per attribute value.
+        - Otherwise: single integer representing the total number of features.
+    """
+
+    # Load Shapefile or GeoPackage
+    gdf = gpd.read_file(input_path)
+
+    # If no attribute is given, count total features
+    if attribute is None:
+        count = len(gdf)
+        print(f"Total number of features: {count}")
+        return count
+
+    # If attribute exists, count features grouped by attribute values
+    if attribute in gdf.columns:
+        counts = gdf[attribute].value_counts().to_dict()
+        print(f"Number of features per '{attribute}':")
+        for value, count in counts.items():
+            print(f"  Value '{value}': {count} features")
+        return counts
+    else:
+        raise ValueError(f"Attribute '{attribute}' not found in the input file.")

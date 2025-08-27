@@ -1,45 +1,45 @@
 import rasterio
 import numpy as np
-from shapely.geometry import Point
-import geopandas as gpd
+from rasterio.warp import reproject, Resampling
 
-# Pfad zu deinem Raster
-raster_path = r"Y:\MnD\data\GroundTruth\Sealed\2_upscaled_force\Mask\mask_v3\Frankfurt_xxxx_sealed_surface_fraction_10m_FORCE.tif"
+# Eingabepfade
+raster_a_path = r"Y:\MnD\data\GroundTruth\Sealed\hamburg_regressio.tif"
+raster_b_path = r"Y:\MnD\data\GroundTruth\Sealed\class_reg_70.tif"
+out_path = r"Y:\MnD\data\GroundTruth\Sealed\class_reg_70.tif"
 
-# Mindestabstand in Metern
-spacing = 31
+with rasterio.open(raster_a_path) as A, rasterio.open(raster_b_path) as B:
+    # B auf A ausrichten, falls nötig
+    same_grid = (A.crs==B.crs and A.transform==B.transform and A.width==B.width and A.height==B.height)
+    if not same_grid:
+        b_aligned = np.empty((B.count, A.height, A.width), dtype=np.float32)
+        for i in range(B.count):
+            reproject(
+                rasterio.band(B, i+1), b_aligned[i],
+                src_transform=B.transform, src_crs=B.crs,
+                dst_transform=A.transform, dst_crs=A.crs,
+                dst_width=A.width, dst_height=A.height,
+                resampling=Resampling.nearest
+            )
+    else:
+        b_aligned = B.read().astype(np.float32)
 
-# Raster öffnen
-with rasterio.open(raster_path) as src:
-    bounds = src.bounds
-    crs = src.crs
-    transform = src.transform
-    mask = src.read(1)  # erstes Band lesen
+    # robuste NoData-Maske aus A
+    m = (A.dataset_mask()==0)
+    a1 = A.read(1, masked=False)
+    if A.nodata is not None and not (isinstance(A.nodata,float) and np.isnan(A.nodata)):
+        m |= (a1 == A.nodata)
+    if np.issubdtype(a1.dtype, np.floating):
+        m |= np.isnan(a1)
 
-# Gitterpunkte generieren
-x_coords = np.arange(bounds.left, bounds.right, spacing)
-y_coords = np.arange(bounds.bottom, bounds.top, spacing)
-points = [Point(x, y) for x in x_coords for y in y_coords]
+    # NaN als NoData
+    profile = A.profile
+    profile.update(count=B.count, dtype="float32", nodata=np.nan)
 
-# In GeoDataFrame umwandeln
-gdf = gpd.GeoDataFrame(geometry=points, crs=crs)
+    # Maske anwenden
+    for i in range(b_aligned.shape[0]):
+        band = b_aligned[i]
+        band[m] = np.nan
+        b_aligned[i] = band
 
-# Nur Punkte innerhalb des gültigen Rasterbereichs (nicht-NA) behalten
-with rasterio.open(raster_path) as src:
-    valid_points = []
-    for pt in points:
-        row, col = src.index(pt.x, pt.y)
-        try:
-            if src.read(1)[row, col] != src.nodata:
-                valid_points.append(pt)
-        except IndexError:
-            continue
-
-    gdf_valid = gpd.GeoDataFrame(geometry=valid_points, crs=crs)
-
-    coord_list = [(x, y) for x, y in zip(gdf_valid["geometry"].x, gdf_valid["geometry"].y)]
-    gdf_valid["value"] = [val[0] for val in src.sample(coord_list)]
-    gdf_valid = gdf_valid[~np.isnan(gdf_valid["value"])]
-
-# Optional: Speichern
-gdf_valid.to_file(r"Y:\MnD\data\GroundTruth\Sealed\2_upscaled_force\Mask\mask_v3\temp\nrw_sample_points_30m.shp")
+with rasterio.open(out_path, "w", **profile) as dst:
+    dst.write(b_aligned)
