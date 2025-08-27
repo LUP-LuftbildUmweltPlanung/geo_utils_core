@@ -5,7 +5,7 @@ setup(
     version="0.1.0",
     packages=find_packages(),
     install_requires=[
-        "rasterio>=1.3.9,<2.0.0",
+        "rasterio>=1.3.0,<2.0.0",
         "geopandas>=1.0.0,<2.0.0",
         "numpy>=1.26.1,<2.0.0",
         "shapely>=2.0.0,<3.0.0"

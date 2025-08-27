@@ -1,52 +1,26 @@
-# Project Title
-
-Simple overview of use/purpose.
-
 ## Description
-
-An in-depth paragraph about your project and overview of use.
+This package includes multiple geoprocessing tools. It contains only basic tools that are commonly used and needed repeatedly.
 
 ## Getting Started
 
 ### Dependencies
 
-* Describe any prerequisites, libraries, OS version, etc., needed before installing program.
-* ex. Windows 10
+Dependencies will be automatically installed when the package is installed.
 
 ### Installing
 
-* How/where to download your program
-* Any modifications needed to be made to files/folders
+* The package can be easily added to any project by running: pip install git+https://github.com/LUP-LuftbildUmweltPlanung/geo_utils_core
 
-### Executing program
+* After installation, the functions can be accessed like any other Python package. For example: from geo_utils_core.utils import raster
 
-* How to run the program
-* Step-by-step bullets
-```
-code blocks for commands
-```
+## Adding New Functions
 
-## Help
-
-Any advise for common problems or issues.
-```
-command to run if program contains helper info
-```
+Everyone is welcome to contribute, update, or improve the current functions. When adding new functions, please ensure that they follow the uniform structure of existing functions, including a detailed description of the function and parameters at the beginning.
 
 ## Authors
 
-Contributors names / contact info / GitHub Acc
-
-
-## Known Issues
-
-* list known issues or limitations
-
+LUP GmbH
 
 ## License
 
 This project is licensed under the [NAME HERE] License - see the LICENSE.md file for details
-
-## References
-
-Inspiration, code snippets, etc.
