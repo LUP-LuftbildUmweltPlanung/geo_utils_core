@@ -111,7 +111,7 @@ def compare_rasters(
 
 
 # Example:
-truth_path = r"Y:\MnD\data\GroundTruth\Sealed\truth.tif"
-model_path = r"Y:\MnD\data\GroundTruth\Sealed\class_reg_90.tif"
+truth_path = r"C:\Users\frede\Desktop\Sealed\nrw_masked2.tif"
+model_path = r"C:\Users\frede\Desktop\Sealed\germany_final.tif"
 metrics = compare_rasters(truth_path, model_path, resampling="bilinear")
 print(metrics)
