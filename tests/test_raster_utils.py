@@ -1,4 +1,4 @@
-# tests/test_coregistration.py
+# tests/test_raster_utils.py
 import os
 import numpy as np
 import pytest
@@ -6,7 +6,7 @@ import rasterio
 from affine import Affine
 from rasterio.crs import CRS
 
-from geo_utils.raster import co_registration # adjust import to your module name
+from geo_utils.raster_utils import co_registration # adjust import to your module name
 
 
 # ----------------------- Helpers -----------------------

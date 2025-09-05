@@ -22,5 +22,5 @@ dev = ["pytest>=7", "pytest-cov"]
 
 [tool.setuptools.packages.find]
 # include your src packages; adjust if you use a 'src/' layout
-include = ["geo_utils_core*"]
+include = ["geo_utils*"]
 exclude = ["tests*"]

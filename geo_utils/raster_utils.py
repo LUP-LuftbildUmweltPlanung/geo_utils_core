@@ -117,62 +117,45 @@ def co_registration(
 
         dst_profile.update({"nodata": nodata_val})
 
-        # Tiling and BigTIFF options
         if tiled:
-            dst_profile.update({
-                "tiled": True,
-                "blockxsize": blocksize,
-                "blockysize": blocksize
-            })
+            dst_profile.update({"tiled": True, "blockxsize": blocksize, "blockysize": blocksize})
         if use_big_tiff:
             dst_profile.update({"BIGTIFF": "IF_SAFER"})
-
-        # Predictor for better compression (2 = horizontal differencing for ints, 3 = floats)
         if dst_profile["compress"] in ("LZW", "ZSTD"):
-            if 'float' in src_dtype:
-                dst_profile.update({"predictor": 3})
-            else:
-                dst_profile.update({"predictor": 2})
+            dst_profile.update({"predictor": 3 if 'float' in src_dtype else 2})
 
-        # Auto-generate output filename if not given
         if output_path is None:
             base, ext = os.path.splitext(child_path)
             output_path = f"{base}_coregistered{ext}"
 
-        # Warn if discrete data is resampled with interpolation
         if ('int' in src_dtype or 'uint' in src_dtype) and resampling_method != 'nearest':
-            print(
-                "Warning: Categorical/integer data should normally be resampled with 'nearest'."
-            )
+            print("Warning: Categorical/integer data should normally be resampled with 'nearest'.")
 
         env_opts = {"GDAL_NUM_THREADS": "ALL_CPUS"}
         with rasterio.Env(**env_opts):
             with rasterio.open(output_path, "w", **dst_profile) as dst:
-                dst_transform = dst.transform
                 for band_idx in range(1, child.count + 1):
-                    for _, window in dst.block_windows(1):
-                        window_shape = (window.height, window.width)
-                        arr = np.full(window_shape, nodata_val, dtype=src_dtype)
-
-                        reproject(
-                            source=rasterio.band(child, band_idx),
-                            destination=arr,
-                            src_transform=child.transform,
-                            src_crs=child.crs,
-                            dst_transform=window_transform(window, dst_transform),
-                            dst_crs=parent.crs,
-                            resampling=resampling_enum,
-                            src_nodata=src_nodata,
-                            dst_nodata=nodata_val,
-                            num_threads=0  # use all threads
-                        )
-
-                        dst.write(arr, band_idx, window=window)
+                    reproject(
+                        source=rasterio.band(child, band_idx),
+                        destination=rasterio.band(dst, band_idx),
+                        src_transform=child.transform,
+                        src_crs=child.crs,
+                        dst_transform=dst.transform,
+                        dst_crs=parent.crs,
+                        resampling=resampling_enum,
+                        src_nodata=src_nodata,
+                        dst_nodata=nodata_val,
+                        num_threads=0
+                    )
 
     return output_path
 
 
-def compress_raster(input_path, output_path=None, compression_method="ZSTD"):
+def compress_raster(
+        input_path,
+        output_path=None,
+        compression_method="ZSTD"
+):
     """
     Compress a raster and save it to a new path.
     The raster is processed block by block to reduce memory usage.
@@ -214,3 +197,8 @@ def compress_raster(input_path, output_path=None, compression_method="ZSTD"):
                     dst.write(data, i, window=window)    # Write the block
 
     return output_path
+
+
+co_registration(r"C:\Users\frede\Desktop\Freddy\2025_Thueringenforst_Schadflaechen\temp\temp\clipped_ergebnis_sommer_2024_rasterized.tif",
+                r"C:\Users\frede\Desktop\Freddy\2025_Thueringenforst_Schadflaechen\temp\temp\clipped_DSW.tif",
+                "cubic")
