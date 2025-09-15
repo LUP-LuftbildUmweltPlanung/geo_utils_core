@@ -197,8 +197,3 @@ def compress_raster(
                     dst.write(data, i, window=window)    # Write the block
 
     return output_path
-
-
-co_registration(r"C:\Users\frede\Desktop\Freddy\2025_Thueringenforst_Schadflaechen\temp\temp\clipped_ergebnis_sommer_2024_rasterized.tif",
-                r"C:\Users\frede\Desktop\Freddy\2025_Thueringenforst_Schadflaechen\temp\temp\clipped_DSW.tif",
-                "cubic")

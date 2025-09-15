@@ -89,6 +89,9 @@ def compare_rasters(
         # Build valid mask: overlapping, non-NaN pixels in both arrays
         valid = ~np.isnan(truth) & ~np.isnan(model_reproj)
 
+        # Optional: zusätzliche Maske 
+        #valid = valid & (truth >= 90)
+
         n = int(valid.sum())
         if n == 0:
             raise ValueError("No overlapping valid pixels to compare "
@@ -109,9 +112,3 @@ def compare_rasters(
 
         return {"RMSE": rmse, "MAE": mae, "R2": r2, "n": n}
 
-
-# Example:
-truth_path = r"C:\Users\frede\Desktop\Sealed\nrw_masked2.tif"
-model_path = r"C:\Users\frede\Desktop\Sealed\germany_final.tif"
-metrics = compare_rasters(truth_path, model_path, resampling="bilinear")
-print(metrics)
