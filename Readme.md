@@ -16,7 +16,7 @@ There are two ways to use the repo:
 
 2. As a package useable in a python project. Notice: Systemlibs GDAL, PROJ and GEOS need to be installed!
    * The package can be easily added to any project by running: pip install git+https://github.com/LUP-LuftbildUmweltPlanung/geo_utils_core
-   * After installation, the functions can be accessed like any other Python package. For example: from geo_utils_core.utils import raster_utils
+   * After installation, the functions can be accessed for example by: from geo_utils.raster_utils *
 
 ## Current Functions
 
