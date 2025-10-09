@@ -1,7 +1,7 @@
 import numpy as np
+import geopandas as gpd
 import rasterio
 from shapely.geometry import Point
-import geopandas as gpd
 from typing import List, Union, Tuple, Optional, Literal
 from math import hypot
 
