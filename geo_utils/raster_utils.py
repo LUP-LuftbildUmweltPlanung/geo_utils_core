@@ -1,5 +1,4 @@
 import os
-import numpy as np
 import rasterio
 from rasterio.warp import reproject, Resampling
 from rasterio.windows import transform as window_transform

@@ -80,25 +80,51 @@ def rasterize_vector(
 
     # Dtype / nodata defaults (infer from first attribute if needed)
     if datatype is None and nodata_value is None:
-        sample_dtype = gdf[attributes[0]].dtype
-        if np.issubdtype(sample_dtype, np.unsignedinteger):
+        sample_dtypes = [gdf[attr].dtype for attr in attributes]
+        dtype_order = [np.int8, np.uint8, np.int16, np.uint16, np.int32, np.uint32, np.float32]
+        for dtype in dtype_order:
+            if any(np.issubdtype(dt, dtype) for dt in sample_dtypes):
+                chosen_dtype = dtype
+                break
+        if chosen_dtype == np.int8:
+            datatype, nodata_value = "int8", -128
+        elif chosen_dtype == np.uint8:
             datatype, nodata_value = "uint8", 255
-        elif np.issubdtype(sample_dtype, np.integer):
-            datatype, nodata_value = "int32", -1
-        else:
+        elif chosen_dtype == np.int16:
+            datatype, nodata_value = "int16", -32768
+        elif chosen_dtype == np.uint16:
+            datatype, nodata_value = "uint16", 65535
+        elif chosen_dtype == np.int32:
+            datatype, nodata_value = "int32", -2147483648
+        elif chosen_dtype == np.uint32:
+            datatype, nodata_value = "uint32", 4294967295
+        elif chosen_dtype == np.float32:
             datatype, nodata_value = "float32", -9999.0
+        else:
+            raise ValueError(
+                f"Unsupported dtype '{chosen_dtype}'. "
+                "Expected int8, uint8, int16, uint16, int32, uint32, or float32."
+            )
     elif datatype is None and nodata_value is not None:
         # Safe fallback if only nodata provided
         datatype = "float32"
     elif datatype is not None and nodata_value is None:
-        if datatype == "uint8":
+        if datatype in ['int8']:
+            nodata_value == -128
+        elif datatype == "uint8":
             nodata_value = 255
+        elif datatype == "int16":
+            nodata_value = -32768
+        elif datatype == "uint16":
+            nodata_value = 65535
         elif datatype == "int32":
-            nodata_value = -1
+            nodata_value = -2147483648
+        elif datatype == "uint32":
+            nodata_value = 4294967295
         elif datatype == "float32":
             nodata_value = -9999.0
         else:
-            raise ValueError("datatype must be one of: 'uint8', 'int32', 'float32'.")
+            raise ValueError("datatype must be one of: 'int8', 'uint8', 'int16', 'uint16', 'int32', 'uint32', 'float32'.")
 
     # Extent & dimensions
     minx, miny, maxx, maxy = gdf.total_bounds

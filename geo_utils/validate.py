@@ -1,17 +1,14 @@
-import numpy as np
-import rasterio
-from rasterio.warp import reproject, Resampling
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-
+from geo_utils.raster_utils import *
 
 def compare_rasters(
     truth_path: str,
     model_path: str,
-    resampling: str = "bilinear",
+    resampling: str = "nearest",
     verbose: bool = True,
 ):
     """
-    Compare two rasters (truth vs model) over their overlapping area only.
+    Compare two rasters (truth vs model) over their overlapping pixels only.
     Handles different dimensions, resolutions, alignment, and CRS by
     reprojecting the model raster onto the truth raster's grid.
     NoData pixels (in either raster) and non-overlapping regions are ignored.
@@ -22,9 +19,9 @@ def compare_rasters(
         Path to raster with ground truth values.
     model_path : str
         Path to raster with model predictions.
-    resampling : {"nearest","bilinear","cubic","average","mode"}, default "bilinear"
+    resampling : {"nearest","bilinear","cubic","average","mode"}, default "nearest"
         Resampling method used when aligning the model raster to the truth grid.
-        For continuous predictions, "bilinear" is usually appropriate.
+        For continuous data, "bilinear" and for categorical data, "nearest" is usually appropriate.
     verbose : bool, default True
         Print metrics to stdout.
 
@@ -34,62 +31,37 @@ def compare_rasters(
         {"RMSE": float, "MAE": float, "R2": float, "n": int}
         where n is the number of overlapping valid pixels used.
     """
-    # Map string to rasterio Resampling
-    resampling_map = {
-        "nearest": Resampling.nearest,
-        "bilinear": Resampling.bilinear,
-        "cubic": Resampling.cubic,
-        "average": Resampling.average,
-        "mode": Resampling.mode,
-    }
-    if resampling not in resampling_map:
-        raise ValueError(f"Unsupported resampling '{resampling}'. "
-                         f"Choose from {list(resampling_map.keys())}")
-
+    # Check if rasters are aligned
     with rasterio.open(truth_path) as truth_ds, rasterio.open(model_path) as model_ds:
-        # Read truth (band 1) and promote to float for NaN handling
-        truth = truth_ds.read(1).astype("float64", copy=False)
-        truth_nodata = truth_ds.nodata
+        same_shape = truth_ds.shape == model_ds.shape
+        same_crs = truth_ds.crs == model_ds.crs
+        same_transform = truth_ds.transform.almost_equals(model_ds.transform, precision=6)
 
+        if same_shape and same_crs and same_transform:
+            model_reproj_path = model_path
+            print("Rasters are already perfectly aligned — skipping co-registration.")
+        else:
+            print("Rasters differ in CRS, shape, or alignment — performing co-registration.")
+            model_reproj_path = co_registration(truth_path, model_path, resampling)
+
+    with rasterio.open(truth_path) as truth_ds, rasterio.open(model_reproj_path) as model_ds:
+        # Read truth (band 1) and promote to float for NaN handling
+        truth = truth_ds.read(1).astype("float32", copy=False)
+        truth_nodata = truth_ds.nodata
         # Convert truth nodata to NaN
         if truth_nodata is not None:
             truth[truth == truth_nodata] = np.nan
 
-        # Prepare destination array for reprojected model on truth grid
-        model_reproj = np.full(truth_ds.shape, np.nan, dtype="float64")
-
-        # Choose a numeric nodata placeholder for the reproject call
-        # (reproject works best with numeric nodata; we'll convert to NaN afterward)
-        src_nodata = model_ds.nodata
-        if src_nodata is None:
-            # pick a value unlikely to appear in real data
-            src_nodata = -9.223372e18  # a large negative sentinel
-
-        dst_fill_value = -9.223372e18  # sentinel for dst; will be turned into NaN
-
-        # Reproject MODEL → TRUTH grid (CRS, transform, shape)
-        reproject(
-            source=rasterio.band(model_ds, 1),
-            destination=model_reproj,
-            src_transform=model_ds.transform,
-            src_crs=model_ds.crs,
-            src_nodata=src_nodata,
-            dst_transform=truth_ds.transform,
-            dst_crs=truth_ds.crs,
-            dst_nodata=dst_fill_value,
-            resampling=resampling_map[resampling],
-        )
-
-        # Convert sentinels and any model nodata to NaN
-        model_reproj[model_reproj == dst_fill_value] = np.nan
-        # (src_nodata should already be respected, but ensure anyway)
-        # Note: after reprojection, exact equality to src_nodata is rare; this is just a safeguard.
-        model_reproj[model_reproj == src_nodata] = np.nan
+        model = model_ds.read(1).astype("float32", copy=False)
+        model_nodata = model_ds.nodata
+        # Convert model nodata to NaN
+        if model_nodata is not None:
+            model[model == model_nodata] = np.nan
 
         # Build valid mask: overlapping, non-NaN pixels in both arrays
-        valid = ~np.isnan(truth) & ~np.isnan(model_reproj)
+        valid = ~np.isnan(truth) & ~np.isnan(model)
 
-        # Optional: zusätzliche Maske 
+        # Optional: add mask to only compare pixels below or above a certain threshold
         #valid = valid & (truth >= 90)
 
         n = int(valid.sum())
@@ -98,7 +70,7 @@ def compare_rasters(
                              "(check extents, CRS, or NoData settings).")
 
         y_true = truth[valid]
-        y_pred = model_reproj[valid]
+        y_pred = model[valid]
 
         rmse = float(np.sqrt(mean_squared_error(y_true, y_pred)))
         mae = float(mean_absolute_error(y_true, y_pred))
@@ -111,4 +83,3 @@ def compare_rasters(
             print(f"R²:   {r2}")
 
         return {"RMSE": rmse, "MAE": mae, "R2": r2, "n": n}
-
