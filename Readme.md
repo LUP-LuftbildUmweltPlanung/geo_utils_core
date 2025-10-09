@@ -31,7 +31,7 @@ There are two ways to use the repo:
 ### sample_training_points
 * Generate reference points over a raster and sample selected band values.
 
-### validadte
+### validate
 * compare_rasters: Compare two rasters (truth vs model) over their overlapping area only.
 
 ## Adding/changing Functions
