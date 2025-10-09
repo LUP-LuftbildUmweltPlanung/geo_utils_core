@@ -15,8 +15,9 @@ There are two ways to use the repo:
    * pip install -e .[dev] --no-deps _Only neccessary if you want to develop/change functions_
 
 2. As a package useable in a python project. Notice: Systemlibs GDAL, PROJ and GEOS need to be installed!
-   * The package can be easily added to any project by running: pip install git+https://github.com/LUP-LuftbildUmweltPlanung/geo_utils_core
-   * After installation, the functions can be accessed for example by: from geo_utils.raster_utils *
+   * open anaconda prompt and create or activate environment
+   * pip install git+https://github.com/LUP-LuftbildUmweltPlanung/geo_utils_core
+   * After installation, the functions can be accessed for example by: from geo_utils.raster_utils import *
 
 ## Current Functions
 
@@ -31,7 +32,7 @@ There are two ways to use the repo:
 * Generate reference points over a raster and sample selected band values.
 
 ### validadte
-compare_rasters: Compare two rasters (truth vs model) over their overlapping area only.
+* compare_rasters: Compare two rasters (truth vs model) over their overlapping area only.
 
 ## Adding/changing Functions
 
