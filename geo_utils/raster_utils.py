@@ -196,3 +196,25 @@ def compress_raster(
                     dst.write(data, i, window=window)    # Write the block
 
     return output_path
+
+
+def build_pyramids(
+        input_folder
+):
+    """
+    Builds pyramidsdirectly in file.
+
+    :param input_path: str
+        Path to the input folder, containing raster files.
+    """
+    for filename in os.listdir(input_folder):
+        if filename.endswith('.tif'):  # Check for TIFF files
+            filepath = os.path.join(input_folder, filename)
+            with rasterio.open(filepath, 'r+') as src:  # Open the file in read-write mode
+                # Define pyramid levels to generate
+                # overviews = [2, 4, 8, 16, 32]
+                overviews = [4, 8, 16, 32]
+
+                src.build_overviews(overviews, Resampling.nearest)
+                src.update_tags(ns='rio_overview', resampling='nearest')
+                print(f"Built pyramids for {filename}")

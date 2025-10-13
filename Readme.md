@@ -24,6 +24,7 @@ There are two ways to use the repo:
 ### raster_utils
 * co_registration: Co-registers two raster images by reprojecting the target raster (child) to match the reference raster (parent)
 * compress_raster: Compresses raster to reduce file size
+* build_pyramids: Builds pyramids in file
 
 ### vector_utils
 * rasterize_vector: Rasterize a vector layer to a (multi-band) GeoTIFF
