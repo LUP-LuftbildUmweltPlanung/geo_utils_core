@@ -2,8 +2,12 @@ import numpy as np
 import geopandas as gpd
 import rasterio
 from shapely.geometry import Point
+from shapely.strtree import STRtree
+from shapely.ops import unary_union
 from typing import List, Union, Tuple, Optional, Literal
 from math import hypot
+import networkx as nx
+
 
 def generate_points_from_raster(
     raster_path: str,
@@ -152,3 +156,175 @@ def generate_points_from_raster(
         gdf.to_file(output_path)
 
     return gdf
+
+
+def generate_points_from_vector(
+    vector_path: str,
+    attributes: Optional[List[str]] = None,
+    output_path: Optional[str] = None,
+    mode: Literal["fishnet", "random"] = "fishnet",
+    spacing: Optional[float] = None,
+    n_points: Optional[int] = None,
+    local_fishnet: bool = False,
+    random_state: Optional[int] = None,
+    batch_size: Optional[int] = None,
+    max_batches: int = 100,
+) -> gpd.GeoDataFrame:
+    """
+    Generate points within polygons from a vector file. Two different modes are useable:
+    - "fishnet": Create a regular grid with the given `spacing`.
+    - "random": Uniformly sample random points within the vector bounds until `n_points` valid points are collected.
+
+    Parameters
+    ----------
+    vector_path : str
+        Path to the input vector file.
+    attributes : list of str, optional
+        Attribute names to retain.
+    output_path : str, optional
+        Path to save the output GeoDataFrame.
+    mode : {"fishnet", "random"}, default="fishnet"
+        Point generation mode.
+    spacing : float, optional
+        - mode "fishnet": grid spacing in CRS units (required).
+        - mode "random": minimum distance between accepted points (optional).
+    n_points : int, optional
+        Number of points to generate (required for mode "random").
+    local_fishnet : bool, default=False
+        If True, build one fishnet per connected polygon group, otherwise global fishnet over layer extent is build.
+    random_state : int, optional
+        Seed for reproducible random sampling.
+    batch_size : int, optional
+        Batch size for random mode.
+    max_batches : int, default=100
+        Maximum number of random sampling iterations.
+
+    Returns
+    -------
+    gpd.GeoDataFrame
+        GeoDataFrame containing generated points and optional attributes.
+    """
+
+    rng = np.random.default_rng(random_state)
+
+    # Load vector data
+    gdf = gpd.read_file(vector_path)
+    crs = gdf.crs
+    bounds = gdf.total_bounds
+
+    if attributes is None:
+        attributes = [c for c in gdf.columns if c != gdf.geometry.name]
+
+    # Build spatial index for point-in-polygon testing
+    geoms = np.array(gdf.geometry)
+    tree = STRtree(geoms)
+
+    def is_inside(pt: Point) -> bool:
+        idxs = tree.query(pt)
+        return any(geoms[i].contains(pt) for i in idxs)
+
+    # Identify polygon groups if local_fishnet=True
+    if local_fishnet:
+        print("Identifying connected polygon groups...")
+
+        neighbors = {}
+        for i, geom in enumerate(gdf.geometry):
+            idxs = tree.query(geom)
+            touching = [
+                j for j in idxs
+                if i != j and (geom.intersects(gdf.geometry.iloc[j]) or geom.touches(gdf.geometry.iloc[j]))
+            ]
+            neighbors[i] = touching
+
+        G = nx.Graph()
+        for i, neighs in neighbors.items():
+            for j in neighs:
+                G.add_edge(i, j)
+
+        components = list(nx.connected_components(G))
+        group_ids = {}
+        for gid, comp in enumerate(components):
+            for idx in comp:
+                group_ids[idx] = gid
+        gdf["group_id"] = gdf.index.map(group_ids)
+        print(f"Detected {len(components)} polygon groups.")
+    else:
+        gdf["group_id"] = 0
+
+    # Point generation
+    points = []
+
+    if mode == "fishnet":
+        if spacing is None:
+            raise ValueError("Parameter 'spacing' is required for mode='fishnet'.")
+
+        if local_fishnet:
+            for gid, group in gdf.groupby("group_id"):
+                print(f"Creating fishnet for group {gid} with {len(group)} polygon(s)...")
+                group_union = unary_union(group.geometry)
+                minx, miny, maxx, maxy = group_union.bounds
+                xs = np.arange(minx, maxx + spacing, spacing)
+                ys = np.arange(miny, maxy + spacing, spacing)
+                for x in xs:
+                    for y in ys:
+                        pt = Point(x, y)
+                        if group_union.contains(pt):
+                            points.append(pt)
+        else:
+            xs = np.arange(bounds[0], bounds[2] + spacing, spacing)
+            ys = np.arange(bounds[1], bounds[3] + spacing, spacing)
+            for x in xs:
+                for y in ys:
+                    pt = Point(x, y)
+                    if is_inside(pt):
+                        points.append(pt)
+
+    elif mode == "random":
+        if n_points is None:
+            raise ValueError("Parameter 'n_points' is required for mode='random'.")
+        if batch_size is None:
+            batch_size = max(n_points * 2, 1000)
+
+        for _ in range(max_batches):
+            xs = rng.uniform(bounds[0], bounds[2], batch_size)
+            ys = rng.uniform(bounds[1], bounds[3], batch_size)
+            for x, y in zip(xs, ys):
+                pt = Point(x, y)
+                if not is_inside(pt):
+                    continue
+                if spacing is not None and points:
+                    if any(hypot(pt.x - p.x, pt.y - p.y) < spacing for p in points):
+                        continue
+                points.append(pt)
+                if len(points) >= n_points:
+                    break
+            if len(points) >= n_points:
+                break
+        if len(points) < n_points:
+            raise RuntimeError(f"Only {len(points)} valid points found (requested {n_points}).")
+
+    else:
+        raise ValueError("Parameter 'mode' must be either 'fishnet' or 'random'.")
+
+    # Build GeoDataFrame of points
+    gdf_points = gpd.GeoDataFrame(geometry=points, crs=crs)
+
+    # Optional attribute join
+    if attributes:
+        joined = gpd.sjoin(
+            gdf_points,
+            gdf[attributes + [gdf.geometry.name]],
+            how="inner",
+            predicate="within"
+        )
+        joined = joined[[*attributes, "geometry"]]
+    else:
+        joined = gdf_points
+
+    # Save output
+    if output_path:
+        joined.to_file(output_path)
+        print(f"Output saved to: {output_path}")
+
+    print(f"Finished. {len(joined)} points generated.")
+    return joined

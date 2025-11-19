@@ -218,3 +218,4 @@ def build_pyramids(
                 src.build_overviews(overviews, Resampling.nearest)
                 src.update_tags(ns='rio_overview', resampling='nearest')
                 print(f"Built pyramids for {filename}")
+

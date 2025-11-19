@@ -9,13 +9,12 @@ There are two ways to use the repo:
 
 1. As a stand alone repo. Therefore, follow these steps:
    * git clone https://github.com/LUP-LuftbildUmweltPlanung/geo_utils_core
-   * conda create -n geo-utils-core -c conda-forge python=3.10 gdal=3.8 rasterio=1.3.9 fiona=1.9 geopandas shapely
+   * cd path/to/repo
+   * conda env create -f environment.yaml
    * conda activate geo-utils-core
-   * conda install -c conda-forge pytest pytest-cov _Only neccessary if you want to develop/change functions_
-   * pip install -e .[dev] --no-deps _Only neccessary if you want to develop/change functions_
 
 2. As a package useable in a python project. Notice: Systemlibs GDAL, PROJ and GEOS need to be installed!
-   * open anaconda prompt and create or activate environment
+   * open anaconda prompt and (create and) activate environment
    * pip install git+https://github.com/LUP-LuftbildUmweltPlanung/geo_utils_core
    * After installation, the functions can be accessed for example by: from geo_utils.raster_utils import *
 
@@ -31,6 +30,7 @@ There are two ways to use the repo:
 
 ### sample_training_points
 * Generate reference points over a raster and sample selected band values.
+* Generate reference points over a polygon vector file.
 
 ### validate
 * compare_rasters: Compare two rasters (truth vs model) over their overlapping area only.

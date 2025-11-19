@@ -1,0 +1,26 @@
+name: geo-utils-core
+channels:
+  - conda-forge
+
+dependencies:
+  - python=3.10
+
+  # CORE numerical + ML
+  - numpy
+  - pandas
+  - scikit-learn
+
+  # GIS stack
+  - gdal=3.8.4
+  - rasterio=1.3.9
+  - pyproj
+  - proj
+  - proj-data
+  - fiona
+  - shapely
+  - geopandas
+
+  # For editable install
+  - pip
+  - pip:
+      - -e .
