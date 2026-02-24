@@ -1,7 +1,17 @@
 import os
+import glob
+import warnings
+import rasterio
+from pathlib import Path
+import numpy as np
+from osgeo import gdal, gdal_array
+from tqdm import tqdm
 import rasterio
 from rasterio.warp import reproject, Resampling
 from rasterio.windows import transform as window_transform
+from rasterio.enums import Resampling
+
+
 
 def co_registration(
     parent_path,
@@ -219,3 +229,289 @@ def build_pyramids(
                 src.update_tags(ns='rio_overview', resampling='nearest')
                 print(f"Built pyramids for {filename}")
 
+
+def mosaic_rasters_windowed(
+    tiles,
+    output_file,
+    *,
+    dtype_out=None,
+    recursive=False,
+    window_px=4096,
+    nodata_value=0,
+    show_progress=True,
+    target_srs=None,
+    resampling="near",
+    build_overviews=True,
+    overview_resampling="nearest"
+):
+    """
+    Seam-safe, pixel-aligned windowed raster mosaicking.
+
+    This function mosaics a large number of GeoTIFF tiles into a single raster
+    using block-wise (windowed) processing to avoid memory issues.
+
+    Parameters
+    ----------
+    tiles : str or list
+        Folder path, glob pattern, or explicit list of GeoTIFF files.
+    output_file : str or Path
+        Output GeoTIFF mosaic path.
+    dtype_out : GDAL data type, optional
+        Output datatype. If None, uses datatype of first tile.
+    recursive : bool
+        Search subfolders for tiles.
+    window_px : int
+        Window size (in pixels) for block-wise processing.
+    nodata_value : int or float
+        Explicit NoData value (recommended: 0 for RGB/RGBI).
+    show_progress : bool
+        Show progress bars.
+    target_srs : str or None
+        Optional reprojection target CRS (e.g. "EPSG:25832").
+    resampling : str
+        Resampling method if reprojection is applied.
+    build_overviews : bool
+        Build internal overviews (pyramids) after mosaicking.
+    """
+
+    # ------------------------------------------------------------
+    # Resolve tiles
+    # ------------------------------------------------------------
+    tiles = _resolve_tiles(tiles, recursive)
+    if not tiles:
+        raise FileNotFoundError("No raster tiles found.")
+
+    # ------------------------------------------------------------
+    # Read reference tile
+    # ------------------------------------------------------------
+    ref = gdal.Open(tiles[0], gdal.GA_ReadOnly)
+    if ref is None:
+        raise RuntimeError(f"Cannot open {tiles[0]}")
+
+    gt0 = ref.GetGeoTransform()
+    # gt = (
+    #     gt[0],  # top-left X (origin X)
+    #     gt[1],  # pixel width (X resolution)
+    #     gt[2],  # row rotation (usually 0)
+    #     gt[3],  # top-left Y (origin Y)
+    #     gt[4],  # column rotation (usually 0)
+    #     gt[5],  # pixel height (Y resolution, usually negative)
+    # )
+    src_srs = ref.GetProjection()
+    xres = gt0[1]
+    yres = gt0[5]
+    bands = ref.RasterCount
+    dtype_first = ref.GetRasterBand(1).DataType
+    ref = None
+
+    if yres >= 0:
+        raise RuntimeError("Input rasters must be north-up.")
+
+    if dtype_out is None:
+        dtype_out = dtype_first
+
+    out_np_dtype = gdal_array.GDALTypeCodeToNumericTypeCode(dtype_out)
+
+    # ------------------------------------------------------------
+    # Scan full mosaic extent (world coordinates)
+    # ------------------------------------------------------------
+    ulx, uly, lrx, lry = [], [], [], []
+
+    it = tiles if not show_progress else tqdm(tiles, desc="Scanning tiles", unit="tile")
+    for p in it:
+        ds = gdal.Open(p, gdal.GA_ReadOnly)
+        if ds is None:
+            warnings.warn(f"Cannot open {p}")
+            continue
+
+        gt = ds.GetGeoTransform()
+        ulx.append(gt[0])
+        uly.append(gt[3])
+        lrx.append(gt[0] + ds.RasterXSize * gt[1])
+        lry.append(gt[3] + ds.RasterYSize * gt[5])
+        ds = None
+
+    full_ulx = min(ulx)
+    full_uly = max(uly)
+    full_lrx = max(lrx)
+    full_lry = min(lry)
+
+    xsize = int(round((full_lrx - full_ulx) / xres))
+    ysize = int(round((full_uly - full_lry) / abs(yres)))
+
+    # ------------------------------------------------------------
+    # Create output raster
+    # ------------------------------------------------------------
+    output_file = Path(output_file)
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+
+    driver = gdal.GetDriverByName("GTiff")
+    dst = driver.Create(
+        str(output_file),
+        xsize,
+        ysize,
+        bands,
+        dtype_out,
+        options=[
+            "TILED=YES",
+            "COMPRESS=DEFLATE",
+            "BIGTIFF=IF_SAFER",
+            "BLOCKXSIZE=512",
+            "BLOCKYSIZE=512",
+        ],
+    )
+
+    dst.SetGeoTransform((full_ulx, xres, 0.0, full_uly, 0.0, yres))
+    dst.SetProjection(src_srs)
+
+    for b in range(1, bands + 1):
+        dst.GetRasterBand(b).SetNoDataValue(nodata_value)
+
+    # ------------------------------------------------------------
+    # Build pixel-based tile index (single grid snap)
+    # ------------------------------------------------------------
+    index = []
+    for p in tiles:
+        ds = gdal.Open(p, gdal.GA_ReadOnly)
+        if ds is None:
+            continue
+
+        gt = ds.GetGeoTransform()
+        xoff = int(round((gt[0] - full_ulx) / xres))
+        yoff = int(round((full_uly - gt[3]) / abs(yres)))
+
+        index.append({
+            "path": p,
+            "xoff": xoff,
+            "yoff": yoff,
+            "xsize": ds.RasterXSize,
+            "ysize": ds.RasterYSize,
+        })
+        ds = None
+
+    # ------------------------------------------------------------
+    # Windowed mosaicking (GDAL-style iteration)
+    # ------------------------------------------------------------
+    y_range = range(0, ysize, window_px)
+    x_range = range(0, xsize, window_px)
+
+    if show_progress:
+        y_range = tqdm(y_range, desc="Mosaicking", unit="row")
+
+    for y0 in y_range:
+        for x0 in x_range:
+            h = min(window_px, ysize - y0)
+            w = min(window_px, xsize - x0)
+
+            buf = np.full((bands, h, w), nodata_value, dtype=out_np_dtype)
+
+            for t in index:
+                ix0 = max(x0, t["xoff"])
+                iy0 = max(y0, t["yoff"])
+                ix1 = min(x0 + w, t["xoff"] + t["xsize"])
+                iy1 = min(y0 + h, t["yoff"] + t["ysize"])
+
+                if ix0 >= ix1 or iy0 >= iy1:
+                    continue
+
+                wx = ix0 - x0
+                wy = iy0 - y0
+                tx = ix0 - t["xoff"]
+                ty = iy0 - t["yoff"]
+                nx = ix1 - ix0
+                ny = iy1 - iy0
+
+                ds = gdal.Open(t["path"], gdal.GA_ReadOnly)
+                if ds is None:
+                    continue
+
+                arr = np.stack(
+                    [ds.GetRasterBand(b + 1).ReadAsArray(tx, ty, nx, ny)
+                     for b in range(bands)],
+                    axis=0,
+                )
+                ds = None
+
+                buf[:, wy:wy + ny, wx:wx + nx] = arr
+
+            for b in range(bands):
+                dst.GetRasterBand(b + 1).WriteArray(buf[b], xoff=x0, yoff=y0)
+
+    dst.FlushCache()
+    dst = None
+
+    # ------------------------------------------------------------
+    # Optional reprojection
+    # ------------------------------------------------------------
+    final_file = output_file
+    if target_srs and target_srs != src_srs:
+        reproj_file = output_file.with_suffix(".reproj.tif")
+        gdal.Warp(
+            str(reproj_file),
+            str(output_file),
+            dstSRS=target_srs,
+            resampleAlg=resampling,
+            multithread=True,
+            creationOptions=[
+                "TILED=YES",
+                "COMPRESS=DEFLATE",
+                "BIGTIFF=IF_SAFER",
+            ],
+        )
+        final_file = reproj_file
+
+    # ------------------------------------------------------------
+    # Build overviews
+    # ------------------------------------------------------------
+    if build_overviews:
+        with rasterio.open(final_file, "r+") as src:
+            if not src.overviews(1):
+                resamp = Resampling[overview_resampling]
+
+                src.build_overviews(
+                    [2, 4, 8, 16, 32, 64],
+                    resamp
+                )
+
+                src.update_tags(
+                    ns="rio_overview",
+                    resampling=overview_resampling
+                )
+
+    if show_progress:
+        print(f"✓ Final mosaic ready → {final_file}")
+
+
+def _resolve_tiles(src, recursive=False):
+    if isinstance(src, (str, Path)):
+        p = Path(src)
+        if p.is_dir():
+            files = p.rglob("*.tif") if recursive else p.glob("*.tif")
+            files = list(files) + list(
+                p.rglob("*.tiff") if recursive else p.glob("*.tiff")
+            )
+        else:
+            files = glob.glob(str(p))
+    else:
+        files = [Path(f) for f in src]
+
+    return sorted(str(f) for f in files if Path(f).is_file())
+
+# Example 1: simple mosaic, no reprojection
+mosaic_rasters_windowed(
+    tiles=r"\Path\to\img_tiles",
+    output_file=r"\Path\to\output\folder\test.tif",
+    nodata_value=65300,
+    build_overviews=True,
+    overview_resampling="nearest", # Use: nearest when RGB, RGBI / Use: average or bilinear when (DTM / DGM / DSM / NDOM) (continuous elevation data)
+)
+
+# Example 2: mosaic + reprojection
+# mosaic_rasters_windowed(
+#     tiles=r"\Path\to\img_tiles",
+#     output_file=r"\Path\to\output\folder\test.tif",
+#     nodata_value=-9999,
+#     target_srs="EPSG:25832",
+#     resampling="near",
+#     build_overviews=True,
+# )
