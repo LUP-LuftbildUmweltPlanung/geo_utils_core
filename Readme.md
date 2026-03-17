@@ -27,9 +27,17 @@ There are two ways to use the repo:
 * co_registration: Co-registers two raster images by reprojecting the target raster (child) to match the reference raster (parent)
 * compress_raster: Compresses raster to reduce file size
 * build_pyramids: Builds pyramids in file
+* mosaic_rasters_windowed: mosaics a large number of GeoTIFF tiles into a single raster using block-wise (windowed) processing to avoid memory issues
 
 ### vector_utils
 * rasterize_vector: Rasterize a vector layer to a (multi-band) GeoTIFF
+* count_features:  Count the number of features in a Shapefile or GeoPackage. If an attribute is provided, counts are grouped by the unique values of that attribute.
+
+### spatial_utils
+* spatial_thinning: removes points that are closer than the given minimum distance
+* compute_target_sample_size: Computes target sample sizes per class and generates a simplified GRTS-ready CSV table.
+* run_grts: Run the GRTS (Generalized Random Tessellation Stratified) sampling method using an R script.
+* run_blockcv: Run the Block Cross-Validation (BlockCV) method using an R script.
 
 ### sample_training_points
 * Generate reference points over a raster and sample selected band values.
