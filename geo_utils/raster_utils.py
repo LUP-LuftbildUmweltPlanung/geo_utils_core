@@ -222,8 +222,7 @@ def build_pyramids(
             filepath = os.path.join(input_folder, filename)
             with rasterio.open(filepath, 'r+') as src:  # Open the file in read-write mode
                 # Define pyramid levels to generate
-                # overviews = [2, 4, 8, 16, 32]
-                overviews = [4, 8, 16, 32]
+                overviews = [4, 8, 16, 32, 64]
 
                 src.build_overviews(overviews, Resampling.nearest)
                 src.update_tags(ns='rio_overview', resampling='nearest')

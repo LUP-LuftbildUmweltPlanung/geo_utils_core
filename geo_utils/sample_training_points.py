@@ -328,3 +328,9 @@ def generate_points_from_vector(
 
     print(f"Finished. {len(joined)} points generated.")
     return joined
+
+generate_points_from_raster(r"\\QNAP-Hegel-1\projekte-Hegel-1\MnD\data\GroundTruth\Sealed\4_validation\v3\hh_truth_data.tif",
+                            output_path=r"C:\Users\frede\Documents\Projekte\test_dataset_reg.shp",
+                            mode="random",
+                            spacing=40,
+                            n_points=500)

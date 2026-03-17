@@ -240,6 +240,9 @@ def count_features(
     # If attribute exists, count features grouped by attribute values
     if attribute in gdf.columns:
         counts = gdf[attribute].value_counts().to_dict()
+        # Sort by key, otherwise sorted by value
+        counts = dict(sorted(counts.items(), key=lambda item: item[0]))
+
         print(f"Number of features per '{attribute}':")
         for value, count in counts.items():
             print(f"  Value '{value}': {count} features")
