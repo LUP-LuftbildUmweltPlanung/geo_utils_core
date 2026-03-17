@@ -13,10 +13,13 @@ There are two ways to use the repo:
    * conda env create -f environment.yaml
    * conda activate geo-utils-core
 
-2. As a package useable in a python project. Notice: Systemlibs GDAL, PROJ and GEOS need to be installed!
-   * open anaconda prompt and (create and) activate environment
+2. As a package useable in a python project. 
+   * open anaconda prompt and 
+     * create an environment with conda create -n geo-utils-core conda-forge python=3.10 numpy pandas scikit-learn gdal=3.8.4 rasterio=1.3.9 pyproj proj proj-data fiona shapely geopandas OR
+     * activate environment and install missing dependencies 
+   * activate environment
    * pip install git+https://github.com/LUP-LuftbildUmweltPlanung/geo_utils_core
-   * After installation, the functions can be accessed for example by: from geo_utils.raster_utils import *
+   * After installation, the functions can be accessed by: from geo_utils.raster_utils import *
 
 ## Current Functions
 
