@@ -20,6 +20,9 @@ dependencies:
   - shapely
   - geopandas
 
+  # additional libraries
+  - tqdm
+
   # For editable install
   - pip
   - pip:

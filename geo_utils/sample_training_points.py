@@ -7,6 +7,7 @@ from shapely.ops import unary_union
 from typing import List, Union, Tuple, Optional, Literal
 from math import hypot
 import networkx as nx
+import os
 
 
 def generate_points_from_raster(
@@ -209,6 +210,9 @@ def generate_points_from_vector(
 
     # Load vector data
     gdf = gpd.read_file(vector_path)
+    valid_mask = gdf.geometry.notna() & ~gdf.geometry.is_empty & gdf.is_valid
+    gdf = gdf[valid_mask].copy()
+    gdf = gdf.reset_index(drop=True)
     crs = gdf.crs
     bounds = gdf.total_bounds
 
@@ -238,6 +242,7 @@ def generate_points_from_vector(
 
         G = nx.Graph()
         for i, neighs in neighbors.items():
+            G.add_node(i)
             for j in neighs:
                 G.add_edge(i, j)
 
@@ -262,7 +267,15 @@ def generate_points_from_vector(
             for gid, group in gdf.groupby("group_id"):
                 print(f"Creating fishnet for group {gid} with {len(group)} polygon(s)...")
                 group_union = unary_union(group.geometry)
+
+                if group_union.is_empty:
+                    print(f"Skipping group {gid}: empty geometry after union.")
+                    continue
+
                 minx, miny, maxx, maxy = group_union.bounds
+                if not np.isfinite([minx, miny, maxx, maxy]).all():
+                    print(f"Skipping group {gid}: invalid bounds {group_union.bounds}")
+                    continue
                 xs = np.arange(minx, maxx + spacing, spacing)
                 ys = np.arange(miny, maxy + spacing, spacing)
                 for x in xs:
@@ -322,15 +335,12 @@ def generate_points_from_vector(
         joined = gdf_points
 
     # Save output
-    if output_path:
-        joined.to_file(output_path)
-        print(f"Output saved to: {output_path}")
+    if output_path is None:
+        base, ext = os.path.splitext(vector_path)
+        output_path = f"{base}_sample_points{ext}"
+
+    joined.to_file(output_path)
+    print(f"Output saved to: {output_path}")
 
     print(f"Finished. {len(joined)} points generated.")
     return joined
-
-generate_points_from_raster(r"\\QNAP-Hegel-1\projekte-Hegel-1\MnD\data\GroundTruth\Sealed\4_validation\v3\hh_truth_data.tif",
-                            output_path=r"C:\Users\frede\Documents\Projekte\test_dataset_reg.shp",
-                            mode="random",
-                            spacing=40,
-                            n_points=500)

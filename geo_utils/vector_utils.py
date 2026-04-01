@@ -241,7 +241,7 @@ def count_features(
     if attribute in gdf.columns:
         counts = gdf[attribute].value_counts().to_dict()
         # Sort by key, otherwise sorted by value
-        counts = dict(sorted(counts.items(), key=lambda item: item[0]))
+        #counts = dict(sorted(counts.items(), key=lambda item: item[0]))
 
         print(f"Number of features per '{attribute}':")
         for value, count in counts.items():
@@ -249,3 +249,6 @@ def count_features(
         return counts
     else:
         raise ValueError(f"Attribute '{attribute}' not found in the input file.")
+
+count_features(r"C:\Users\frede\Documents\Projekte\EO4Nature\shapes\v2_0\reference_points_with_classes.gpkg",
+               "class")
