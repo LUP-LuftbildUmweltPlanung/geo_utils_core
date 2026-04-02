@@ -13,7 +13,7 @@ There are two ways to use the repo:
    * conda env create -f environment.yaml
    * conda activate geo-utils-core
 
-   If using Linux Micomamba should be used insted of conda. To install Micromamba on Linux: 
+   If using Linux Micomamba should be used instead of conda. To install Micromamba on Linux: 
    * curl -Ls https://micro.mamba.pm/install.sh | bash
    * source ~/.bashrc
    
