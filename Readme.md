@@ -13,6 +13,14 @@ There are two ways to use the repo:
    * conda env create -f environment.yaml
    * conda activate geo-utils-core
 
+  If using Linux Micomamba should be used insted of conda. To install Micromamba on Linux: 
+   * curl -Ls https://micro.mamba.pm/install.sh | bash
+   * source ~/.bashrc
+  Then install the environment:
+   * cd path/to/repo
+   * micromamba create -f environment.yaml
+   * micromamba activate geo-utils-core
+
 2. As a package useable in a python project. 
    * open anaconda prompt and 
      * create an environment with conda create -n geo-utils-core conda-forge python=3.10 numpy pandas scikit-learn gdal=3.8.4 rasterio=1.3.9 pyproj proj proj-data fiona shapely geopandas OR
@@ -45,6 +53,9 @@ There are two ways to use the repo:
 
 ### validate
 * compare_rasters: Compare two rasters (truth vs model) over their overlapping area only.
+
+### fractional_cover
+stand alone script that computes the frational cover of a vector file within a force pixel (10 m).
 
 ## Adding/changing Functions
 
